@@ -1,74 +1,81 @@
-# glfw_osmesa — GLFW + OSMesa integration library
+# glfw_osmesa — GLFW + OSMesa integration helper library
 
-A small C library that lets [GLFW](https://www.glfw.org/) manage windows and
-events while [OSMesa](https://docs.mesa3d.org/osmesa.html) (Mesa's off-screen
-software rasteriser) does the rendering — **without touching any system
-OpenGL or Vulkan stack**.
+A small C helper library that lets [GLFW](https://www.glfw.org/) manage windows
+and events while [OSMesa](https://docs.mesa3d.org/osmesa.html) (Mesa's
+off-screen software rasteriser) does the rendering — **without touching any
+system OpenGL or Vulkan stack**.
+
+## Naming convention
+
+Functions in this library use the **snake\_case** prefix `glfw_osmesa_context_`
+to make it explicit that they are **application-side helpers, not proposed
+additions to the GLFW public API**.  Official GLFW functions use `glfwCamelCase`
+— the different style is intentional.
+
+The **only** item proposed for addition to GLFW upstream is the single generic
+blit primitive (documented below).  Everything else lives in user-land.
 
 ## Motivation
 
-GLFW normally requires a system OpenGL or Vulkan context to be associated with
-every window it creates.  Some scenarios need only GLFW's window and
-event-dispatch machinery while obtaining rendered images from a *software*
-rasteriser:
+GLFW normally requires a system OpenGL or Vulkan context for every window it
+creates.  Some scenarios need only GLFW's window and event machinery while
+rendering comes from a *software* rasteriser:
 
-* Headless / CI rendering environments that have no GPU driver.
-* Applications that must run portably on machines where installing GPU drivers
-  is not permitted or not possible.
-* Unit tests that exercise GL rendering code without a display server.
-* Any use-case where predictable, GPU-independent output is required.
-
-This library satisfies those needs by bridging the gap between GLFW's
-`GLFW_NO_API` window mode and OSMesa's CPU-side pixel buffer.
+* Headless / CI environments with no GPU driver.
+* Machines where installing GPU drivers is not permitted.
+* Unit tests that need deterministic, GPU-independent output.
+* Any situation where a user-supplied rasteriser is preferred over the system
+  graphics stack.
 
 ## How it works
 
 ```
-+---------------------------------+
-|  Application OpenGL calls       |
-+---------------+-----------------+
-                |  standard GL API
-+---------------v-----------------+
-|  OSMesa (Mesa software renderer)|  <- no GPU, no system GL driver
-|  renders into a BGRA CPU buffer |
-+---------------+-----------------+
-                |  glfwSwapOSMesaBuffers()
-+---------------v-----------------+
-|  Native OS blit (no GL/Vulkan)  |
-|  * Linux  : XPutImage (X11)     |
-|  * Windows: SetDIBitsToDevice   |
-|  * macOS  : CGContextDrawImage  |
-+---------------+-----------------+
-                |
-+---------------v-----------------+
-|  GLFW window                    |  <- GLFW_CLIENT_API = GLFW_NO_API
-+---------------------------------+
++-----------------------------------+
+|  Application OpenGL calls         |
++----------------+------------------+
+                 |  standard GL API
++----------------v------------------+
+|  OSMesa (CPU-side BGRA buffer)    |  <- no GPU, no system GL driver
++----------------+------------------+
+                 |  glfw_osmesa_context_swap_buffers()
+                 |  (user-land implementation of glfwBlitPixelBuffer)
++----------------v------------------+
+|  Native OS blit  (no GL/Vulkan)   |
+|  * Linux  : XPutImage (X11)       |
+|  * Windows: SetDIBitsToDevice     |
+|  * macOS  : CALayer setContents   |
++----------------+------------------+
+                 |
++----------------v------------------+
+|  GLFW window                      |  <- GLFW_CLIENT_API = GLFW_NO_API
++-----------------------------------+
 ```
 
-## Proposed upstream GLFW API
+## Proposed upstream GLFW addition
 
-The minimum addition required from GLFW itself is one new function:
+The **only** new function proposed for GLFW itself is a generic pixel-blit
+primitive.  It has no knowledge of OSMesa — the application is responsible for
+producing the pixel buffer using whatever renderer it chooses:
 
 ```c
 /*
  * Blit a CPU pixel buffer to a GLFW window using native OS drawing
- * primitives only.  The window must have been created with
+ * primitives.  The window must have been created with
  * GLFW_CLIENT_API = GLFW_NO_API.
  *
  * @param window    Target GLFW window.
- * @param pixels    Pixel data (format determined by the 'format' argument).
+ * @param pixels    Pixel data in the format specified by 'format'.
  * @param srcWidth  Width  of the pixel buffer in pixels.
  * @param srcHeight Height of the pixel buffer in pixels.
- * @param format    One of GLFWOSMESA_FORMAT_RGBA/BGRA/RGB.
+ * @param format    GLFW_OSMESA_FORMAT_RGBA / BGRA / RGB (or an equivalent
+ *                  token that upstream GLFW would define).
  */
 void glfwBlitPixelBuffer(GLFWwindow *window,
                          const void *pixels,
-                         int srcWidth, int srcHeight,
-                         int format);
+                         int         srcWidth,
+                         int         srcHeight,
+                         int         format);
 ```
-
-Everything else in `include/glfw_osmesa.h` is a convenience wrapper that
-could live in user-land (as this library does) without any upstream changes.
 
 ## Quick-start
 
@@ -94,65 +101,67 @@ cmake --build build
 ./build/triangle
 ```
 
-This opens an 800 x 600 window showing a rotating RGB triangle rendered
-entirely by OSMesa.  No GPU or system OpenGL driver is used.
+Opens an 800 x 600 window with a rotating RGB triangle rendered entirely by
+OSMesa.  No GPU or system OpenGL driver is used.
 
 ## API reference
 
-See [`include/glfw_osmesa.h`](include/glfw_osmesa.h) for the full,
-documented public API.  Summary:
+See [`include/glfw_osmesa.h`](include/glfw_osmesa.h) for the full documented
+API.
 
-| Function                             | Description                              |
-|--------------------------------------|------------------------------------------|
-| `glfwCreateOSMesaContext(win, w, h)` | Create context + pixel buffer            |
-| `glfwMakeOSMesaContextCurrent(ctx)`  | Make OSMesa context current for rendering|
-| `glfwResizeOSMesaContext(ctx, w, h)` | Reallocate buffer after window resize    |
-| `glfwSwapOSMesaBuffers(ctx)`         | Blit rendered image to the native window |
-| `glfwDestroyOSMesaContext(ctx)`      | Release all resources                    |
-| `glfwGetOSMesaPixels(ctx, ...)`      | Access the raw pixel buffer              |
-| `glfwGetOSMesaContext(ctx)`          | Retrieve the underlying `OSMesaContext`  |
+| Function (user-land helper — NOT GLFW API)              | Description                              |
+|---------------------------------------------------------|------------------------------------------|
+| `glfw_osmesa_context_create(win, w, h)`                 | Create OSMesa context + pixel buffer     |
+| `glfw_osmesa_context_make_current(ctx)`                 | Route GL calls to software rasteriser    |
+| `glfw_osmesa_context_resize(ctx, w, h)`                 | Reallocate buffer after window resize    |
+| `glfw_osmesa_context_swap_buffers(ctx)`                 | Blit rendered image to the native window |
+| `glfw_osmesa_context_destroy(ctx)`                      | Release all resources                    |
+| `glfw_osmesa_context_get_pixels(ctx, w, h, fmt)`        | Access the raw pixel buffer              |
+| `glfw_osmesa_context_get_raw(ctx)`                      | Get the underlying `OSMesaContext`       |
 
-## Typical usage pattern
+The opaque handle type is `glfw_osmesa_context_t *` (snake\_case `_t` suffix,
+not a GLFW-style typedef).
+
+## Typical usage
 
 ```c
 /* 1. Create a GLFW window with no system GL context. */
 glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
 GLFWwindow *win = glfwCreateWindow(800, 600, "My App", NULL, NULL);
 
-/* 2. Create the OSMesa context bound to that window. */
+/* 2. Set up the OSMesa helper (user-land, not GLFW API). */
 int w, h;
 glfwGetFramebufferSize(win, &w, &h);
-GLFWosmesaContext ctx = glfwCreateOSMesaContext(win, w, h);
-glfwMakeOSMesaContextCurrent(ctx);
+glfw_osmesa_context_t *ctx = glfw_osmesa_context_create(win, w, h);
+glfw_osmesa_context_make_current(ctx);
 
-/* 3. Register the resize callback. */
-glfwSetFramebufferSizeCallback(win, my_resize_callback);
-/*    Inside callback: glfwResizeOSMesaContext(ctx, new_w, new_h); */
+/* 3. Handle resize via the standard GLFW callback. */
+glfwSetFramebufferSizeCallback(win, my_resize_cb);
+/* In my_resize_cb: glfw_osmesa_context_resize(ctx, new_w, new_h); */
 
-/* 4. Main loop -- standard OpenGL here. */
+/* 4. Main loop — use standard OpenGL calls. */
 while (!glfwWindowShouldClose(win)) {
     glClear(GL_COLOR_BUFFER_BIT);
-    /* ... draw ... */
+    /* ... render ... */
     glFinish();
-    glfwSwapOSMesaBuffers(ctx);   /* <- the key call */
+    glfw_osmesa_context_swap_buffers(ctx);  /* <- user-land glfwBlitPixelBuffer */
     glfwPollEvents();
 }
 
 /* 5. Clean up. */
-glfwDestroyOSMesaContext(ctx);
+glfw_osmesa_context_destroy(ctx);
 glfwDestroyWindow(win);
 glfwTerminate();
 ```
 
 ## Platform notes
 
-* **Byte order**: The library uses `OSMESA_BGRA` pixel format.  On
-  little-endian (x86/x86-64) hosts this matches the native pixel layout
-  expected by all three blit paths, so no per-pixel conversion is needed.
-* **Y-axis**: OSMesa's `OSMESA_Y_UP` parameter is set to `0` so row 0 is at
-  the top of the image, consistent with the top-down blit used on all
-  platforms.
-* **Thread safety**: All functions must be called from the main thread, the
+* **Byte order**: `OSMESA_BGRA` pixel format is used throughout.  On
+  little-endian (x86/x86-64) this matches the native pixel layout on all
+  three supported platforms, so no per-pixel colour conversion is needed.
+* **Y-axis**: `OSMESA_Y_UP = 0` is set so row 0 is at the top of the image,
+  consistent with the top-down blit used on all platforms.
+* **Thread safety**: All functions must be called from the main thread — the
   same constraint that GLFW itself imposes.
 
 ## License

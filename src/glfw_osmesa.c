@@ -1,20 +1,24 @@
 /*
- * glfw_osmesa.c — Cross-platform implementation of the glfw_osmesa API.
+ * glfw_osmesa.c — User-land helper: bind OSMesa to a GLFW GLFW_NO_API window.
+ *
+ * Functions here use the  glfw_osmesa_context_  prefix (snake_case) to make
+ * it clear they are NOT part of the GLFW public API.  They are application-
+ * side helpers that demonstrate how glfwBlitPixelBuffer (the single proposed
+ * upstream GLFW addition) would be used in practice.
  *
  * Platform pixel-blit strategy
- * =============================
- * Linux / X11    — XCreateImage() + XPutImage()
- * Windows        — SetDIBitsToDevice() via GDI
- * macOS          — CGBitmapContextCreate() + CGContextDrawImage()
+ * ============================
+ * Linux / X11  — XCreateImage() + XPutImage()
+ * Windows      — SetDIBitsToDevice() via GDI
+ * macOS        — CALayer setContents: + CGImage (CoreGraphics)
  *
- * All three paths receive a BGRA (8-bit-per-channel) buffer produced by
- * OSMesa.  On little-endian x86/x86-64 this byte order matches the native
- * pixel format used by each display system, so no per-pixel colour conversion
- * is needed.
+ * All three paths accept a BGRA (8-bit-per-channel) buffer.  On little-endian
+ * x86/x86-64 this byte order matches the native pixel format used by each
+ * display subsystem, so no per-pixel colour conversion is required.
  */
 
 /* ------------------------------------------------------------------
- * Platform detection and native handle exposure
+ * Platform detection and native-handle access
  * ------------------------------------------------------------------ */
 #if defined(_WIN32)
 #  define NOMINMAX
@@ -44,10 +48,10 @@
 #include <stdio.h>
 
 /* ------------------------------------------------------------------
- * Internal context structure
+ * Internal context structure (definition of the opaque type)
  * ------------------------------------------------------------------ */
 
-struct GLFWosmesaContext_s {
+struct glfw_osmesa_context_s {
     GLFWwindow    *window;
     OSMesaContext  osmesa;
     unsigned char *buffer;   /* BGRA pixel buffer owned by this struct */
@@ -56,25 +60,25 @@ struct GLFWosmesaContext_s {
 
 #if defined(_WIN32)
     HWND           hwnd;
-    BITMAPINFO     bmi;      /* DIB header, recomputed on resize         */
+    BITMAPINFO     bmi;      /* DIB header, recomputed on resize */
 
 #elif defined(__APPLE__)
-    id             nswindow; /* NSWindow* stored as id                   */
+    id              nswindow;    /* NSWindow* stored as id */
     CGColorSpaceRef colorspace;
 
 #else /* X11 */
-    Display       *display;
-    Window         xwindow;
-    GC             gc;
-    int            xdepth;
-    Visual        *visual;
+    Display *display;
+    Window   xwindow;
+    GC       gc;
+    int      xdepth;
+    Visual  *visual;
 #endif
 };
 
 /* ------------------------------------------------------------------
  * Helper: allocate / reallocate the pixel buffer and rebind OSMesa
  * ------------------------------------------------------------------ */
-static int _rebind_buffer(GLFWosmesaContext ctx, int width, int height)
+static int _rebind_buffer(glfw_osmesa_context_t *ctx, int width, int height)
 {
     unsigned char *buf;
 
@@ -87,7 +91,7 @@ static int _rebind_buffer(GLFWosmesaContext ctx, int width, int height)
         return GLFW_FALSE;
     }
 
-    /* Zero-initialize so uninitialised pixels show as black not garbage. */
+    /* Zero so uninitialised pixels show as black, not garbage. */
     memset(buf, 0, (size_t)width * (size_t)height * 4u);
 
     if (!OSMesaMakeCurrent(ctx->osmesa, buf, GL_UNSIGNED_BYTE, width, height)) {
@@ -104,31 +108,33 @@ static int _rebind_buffer(GLFWosmesaContext ctx, int width, int height)
 }
 
 /* ------------------------------------------------------------------
- * Platform-specific initialisation helpers
+ * Platform-specific initialisation and blit helpers
  * ------------------------------------------------------------------ */
 #if defined(_WIN32)
 
-static int _platform_init(GLFWosmesaContext ctx)
+static int _platform_init(glfw_osmesa_context_t *ctx)
 {
     ctx->hwnd = glfwGetWin32Window(ctx->window);
-    if (!ctx->hwnd) return GLFW_FALSE;
-    return GLFW_TRUE;
+    return ctx->hwnd ? GLFW_TRUE : GLFW_FALSE;
 }
 
-static void _platform_update_bmi(GLFWosmesaContext ctx)
+static void _platform_update_bmi(glfw_osmesa_context_t *ctx)
 {
     BITMAPINFOHEADER *h = &ctx->bmi.bmiHeader;
     memset(&ctx->bmi, 0, sizeof(ctx->bmi));
     h->biSize        = sizeof(BITMAPINFOHEADER);
     h->biWidth       = ctx->width;
-    /* Negative height: top-down DIB so row 0 is at the top of the window. */
-    h->biHeight      = -ctx->height;
+    h->biHeight      = -ctx->height; /* negative = top-down DIB */
     h->biPlanes      = 1;
     h->biBitCount    = 32;
     h->biCompression = BI_RGB;
 }
 
-static void _platform_blit(GLFWosmesaContext ctx)
+/*
+ * glfwBlitPixelBuffer — Windows implementation (GDI)
+ * This is what the proposed upstream GLFW function would call on Win32.
+ */
+static void _platform_blit(glfw_osmesa_context_t *ctx)
 {
     HDC hdc;
     _platform_update_bmi(ctx);
@@ -145,7 +151,7 @@ static void _platform_blit(GLFWosmesaContext ctx)
     ReleaseDC(ctx->hwnd, hdc);
 }
 
-static void _platform_destroy(GLFWosmesaContext ctx)
+static void _platform_destroy(glfw_osmesa_context_t *ctx)
 {
     (void)ctx; /* nothing to free on Windows */
 }
@@ -153,30 +159,27 @@ static void _platform_destroy(GLFWosmesaContext ctx)
 /* ---------------------------------------------------------------------- */
 #elif defined(__APPLE__)
 
-static int _platform_init(GLFWosmesaContext ctx)
+static int _platform_init(glfw_osmesa_context_t *ctx)
 {
     ctx->nswindow   = (id)glfwGetCocoaWindow(ctx->window);
     ctx->colorspace = CGColorSpaceCreateDeviceRGB();
-    if (!ctx->nswindow || !ctx->colorspace) return GLFW_FALSE;
-    return GLFW_TRUE;
+    return (ctx->nswindow && ctx->colorspace) ? GLFW_TRUE : GLFW_FALSE;
 }
 
 /*
- * Draw the BGRA pixel buffer into the NSWindow's content view using
- * CoreGraphics — no OpenGL involved.
+ * glfwBlitPixelBuffer — macOS implementation (CoreGraphics / CALayer)
+ * This is what the proposed upstream GLFW function would call on macOS.
  *
- * We set the CGImage directly on the contentView's CALayer via
- * [layer setContents: image].  This avoids the NSGraphicsContext
- * wrapper entirely and works reliably from a C context.
+ * Sets a CGImage directly on the content view's CALayer via
+ * [layer setContents: image] — no NSGraphicsContext unwrapping needed.
  */
-static void _platform_blit(GLFWosmesaContext ctx)
+static void _platform_blit(glfw_osmesa_context_t *ctx)
 {
     CGDataProviderRef provider;
     CGImageRef        image;
     id                contentView;
     id                layer;
 
-    /* Build a CGImage backed by our pixel buffer (zero-copy reference). */
     provider = CGDataProviderCreateWithData(NULL, ctx->buffer,
                                             (size_t)ctx->width *
                                             (size_t)ctx->height * 4u,
@@ -185,9 +188,8 @@ static void _platform_blit(GLFWosmesaContext ctx)
 
     /*
      * kCGBitmapByteOrder32Little | kCGImageAlphaNoneSkipFirst:
-     * Interprets each 32-bit word as xRGB on little-endian, which maps
-     * the BGRA memory layout (B at byte 0 … A at byte 3) correctly to
-     * display-native BGRX.
+     * On little-endian each 32-bit word is read as xRGB, mapping the
+     * BGRA memory layout (B@byte0 … A@byte3) to display-native BGRX.
      */
     image = CGImageCreate((size_t)ctx->width, (size_t)ctx->height,
                           8, 32,
@@ -200,33 +202,22 @@ static void _platform_blit(GLFWosmesaContext ctx)
     CGDataProviderRelease(provider);
     if (!image) return;
 
-    /*
-     * Obtain the CALayer of the NSWindow's content view and set the
-     * CGImage as its contents.  GLFW already enables wantsLayer on
-     * the content view, so the layer always exists.
-     *
-     * [layer setContents: (id)image] uses the CGImageRef directly;
-     * CALayer accepts a CGImageRef cast to id as its contents value.
-     */
     contentView = ((id (*)(id, SEL))objc_msgSend)(
-        ctx->nswindow,
-        sel_registerName("contentView"));
+        ctx->nswindow, sel_registerName("contentView"));
 
     layer = ((id (*)(id, SEL))objc_msgSend)(
-        contentView,
-        sel_registerName("layer"));
+        contentView, sel_registerName("layer"));
 
     if (layer) {
+        /* CALayer accepts a CGImageRef cast to id as its contents value. */
         ((void (*)(id, SEL, id))objc_msgSend)(
-            layer,
-            sel_registerName("setContents:"),
-            (id)image);
+            layer, sel_registerName("setContents:"), (id)image);
     }
 
     CGImageRelease(image);
 }
 
-static void _platform_destroy(GLFWosmesaContext ctx)
+static void _platform_destroy(glfw_osmesa_context_t *ctx)
 {
     if (ctx->colorspace)
         CGColorSpaceRelease(ctx->colorspace);
@@ -235,7 +226,7 @@ static void _platform_destroy(GLFWosmesaContext ctx)
 /* ---------------------------------------------------------------------- */
 #else /* X11 */
 
-static int _platform_init(GLFWosmesaContext ctx)
+static int _platform_init(glfw_osmesa_context_t *ctx)
 {
     XWindowAttributes attrs;
 
@@ -248,20 +239,17 @@ static int _platform_init(GLFWosmesaContext ctx)
     ctx->xdepth = attrs.depth;
 
     ctx->gc = XCreateGC(ctx->display, ctx->xwindow, 0, NULL);
-    if (!ctx->gc) return GLFW_FALSE;
-
-    return GLFW_TRUE;
+    return ctx->gc ? GLFW_TRUE : GLFW_FALSE;
 }
 
 /*
- * Blit the BGRA pixel buffer into the X11 window via XPutImage.
+ * glfwBlitPixelBuffer — X11 implementation (Xlib)
+ * This is what the proposed upstream GLFW function would call on X11.
  *
- * On little-endian (x86/x86-64) systems with a 32-bit TrueColor visual the
- * BGRA byte order matches the native pixel format, so no per-pixel conversion
- * is required.  On big-endian or 24-bit-depth displays a byte-swap step would
- * need to be inserted here before calling XPutImage.
+ * On little-endian x86/x86-64 with a 32-bit TrueColor visual the BGRA byte
+ * order matches the native pixel layout — no per-pixel conversion needed.
  */
-static void _platform_blit(GLFWosmesaContext ctx)
+static void _platform_blit(glfw_osmesa_context_t *ctx)
 {
     char   *data;
     XImage *img;
@@ -279,8 +267,8 @@ static void _platform_blit(GLFWosmesaContext ctx)
                        data,
                        (unsigned int)ctx->width,
                        (unsigned int)ctx->height,
-                       32,   /* bitmap_pad: X11 pads each scanline to 32 bits */
-                       0);   /* bytes_per_line: 0 = auto-compute              */
+                       32,  /* bitmap_pad: scanlines padded to 32 bits */
+                       0);  /* bytes_per_line: 0 = auto-compute        */
     if (!img) {
         free(data);
         return;
@@ -296,7 +284,7 @@ static void _platform_blit(GLFWosmesaContext ctx)
     XDestroyImage(img);
 }
 
-static void _platform_destroy(GLFWosmesaContext ctx)
+static void _platform_destroy(glfw_osmesa_context_t *ctx)
 {
     if (ctx->gc)
         XFreeGC(ctx->display, ctx->gc);
@@ -305,13 +293,14 @@ static void _platform_destroy(GLFWosmesaContext ctx)
 #endif /* platform */
 
 /* ==================================================================
- * Public API implementation
+ * Public API (snake_case, glfw_osmesa_context_ prefix)
  * ================================================================== */
 
-GLFWosmesaContext glfwCreateOSMesaContext(GLFWwindow *window,
-                                          int width, int height)
+glfw_osmesa_context_t *glfw_osmesa_context_create(GLFWwindow *window,
+                                                   int         width,
+                                                   int         height)
 {
-    GLFWosmesaContext ctx;
+    glfw_osmesa_context_t *ctx;
     const int attribs[] = {
         OSMESA_FORMAT,                OSMESA_BGRA,
         OSMESA_DEPTH_BITS,            24,
@@ -323,11 +312,11 @@ GLFWosmesaContext glfwCreateOSMesaContext(GLFWwindow *window,
 
     if (!window || width <= 0 || height <= 0) {
         fprintf(stderr, "glfw_osmesa: invalid parameters to "
-                        "glfwCreateOSMesaContext\n");
+                        "glfw_osmesa_context_create\n");
         return NULL;
     }
 
-    ctx = (GLFWosmesaContext)calloc(1, sizeof(struct GLFWosmesaContext_s));
+    ctx = (glfw_osmesa_context_t *)calloc(1, sizeof(*ctx));
     if (!ctx) return NULL;
 
     ctx->window = window;
@@ -356,7 +345,7 @@ GLFWosmesaContext glfwCreateOSMesaContext(GLFWwindow *window,
     return ctx;
 }
 
-OSMesaContext glfwMakeOSMesaContextCurrent(GLFWosmesaContext ctx)
+OSMesaContext glfw_osmesa_context_make_current(glfw_osmesa_context_t *ctx)
 {
     if (!ctx) {
         OSMesaMakeCurrent(NULL, NULL, GL_UNSIGNED_BYTE, 0, 0);
@@ -370,27 +359,28 @@ OSMesaContext glfwMakeOSMesaContextCurrent(GLFWosmesaContext ctx)
     }
 
     /*
-     * Tell OSMesa that row 0 is at the *top* of the buffer (Y-down), matching
-     * the convention used by all three platform blit paths above.
+     * Row 0 at the top of the buffer (Y-down) — consistent with all three
+     * platform blit paths which draw top-down.
      */
     OSMesaPixelStore(OSMESA_Y_UP, 0);
 
     return ctx->osmesa;
 }
 
-int glfwResizeOSMesaContext(GLFWosmesaContext ctx, int width, int height)
+int glfw_osmesa_context_resize(glfw_osmesa_context_t *ctx,
+                                int width, int height)
 {
     if (!ctx) return GLFW_FALSE;
     return _rebind_buffer(ctx, width, height);
 }
 
-void glfwSwapOSMesaBuffers(GLFWosmesaContext ctx)
+void glfw_osmesa_context_swap_buffers(glfw_osmesa_context_t *ctx)
 {
     if (!ctx || !ctx->buffer) return;
     _platform_blit(ctx);
 }
 
-void glfwDestroyOSMesaContext(GLFWosmesaContext ctx)
+void glfw_osmesa_context_destroy(glfw_osmesa_context_t *ctx)
 {
     if (!ctx) return;
     _platform_destroy(ctx);
@@ -400,18 +390,19 @@ void glfwDestroyOSMesaContext(GLFWosmesaContext ctx)
     free(ctx);
 }
 
-const void *glfwGetOSMesaPixels(GLFWosmesaContext ctx,
-                                 int *width, int *height, int *format)
+const void *glfw_osmesa_context_get_pixels(glfw_osmesa_context_t *ctx,
+                                            int *width,
+                                            int *height,
+                                            int *format)
 {
     if (!ctx) return NULL;
     if (width)  *width  = ctx->width;
     if (height) *height = ctx->height;
-    if (format) *format = GLFWOSMESA_FORMAT_BGRA;
+    if (format) *format = GLFW_OSMESA_FORMAT_BGRA;
     return ctx->buffer;
 }
 
-OSMesaContext glfwGetOSMesaContext(GLFWosmesaContext ctx)
+OSMesaContext glfw_osmesa_context_get_raw(glfw_osmesa_context_t *ctx)
 {
-    if (!ctx) return NULL;
-    return ctx->osmesa;
+    return ctx ? ctx->osmesa : NULL;
 }

@@ -1,27 +1,28 @@
 /*
- * triangle.c — Minimal example: render a coloured triangle with OSMesa
- *              and display it in a GLFW window without any system OpenGL.
+ * triangle.c — Render a coloured triangle with OSMesa and display it in a
+ *              GLFW window, using no system OpenGL or Vulkan.
  *
  * Build (after cmake --build):
  *   Produced automatically as the "triangle" target by CMakeLists.txt.
  *
- * What this shows
- * ---------------
+ * What this demonstrates
+ * ----------------------
  * 1.  A GLFW window is opened with GLFW_CLIENT_API = GLFW_NO_API so that
  *     GLFW does not create a system OpenGL context.
- * 2.  An OSMesa software-rendering context is created and attached to the
- *     window via glfwCreateOSMesaContext().
+ * 2.  glfw_osmesa_context_create() wraps an OSMesa context + pixel buffer.
+ *     Note the snake_case prefix: this is a USER-LAND HELPER, not a
+ *     proposed addition to GLFW itself.
  * 3.  An ordinary OpenGL fixed-function triangle is drawn each frame.
- * 4.  glfwSwapOSMesaBuffers() blits the rendered pixels to the window using
- *     only OS-level drawing APIs (XPutImage on X11, SetDIBitsToDevice on
- *     Windows, CoreGraphics on macOS).
- * 5.  The framebuffer size callback calls glfwResizeOSMesaContext() so the
- *     buffer tracks window resizes correctly.
+ * 4.  glfw_osmesa_context_swap_buffers() blits the rendered pixels to the
+ *     window using only OS drawing primitives (XPutImage / SetDIBitsToDevice
+ *     / CALayer setContents).  This is the user-land implementation of the
+ *     single function that IS proposed for GLFW upstream: glfwBlitPixelBuffer.
+ * 5.  A framebuffer size callback calls glfw_osmesa_context_resize() so the
+ *     pixel buffer tracks window resizes.
  */
 
 #include <stdio.h>
 #include <stdlib.h>
-#include <math.h>
 
 #include <GLFW/glfw3.h>
 #include "glfw_osmesa.h"
@@ -31,18 +32,19 @@ static void draw_frame(int width, int height, float angle);
 static void framebuffer_size_callback(GLFWwindow *window, int w, int h);
 static void error_callback(int code, const char *desc);
 
-/* Global context — used by the resize callback */
-static GLFWosmesaContext g_osmesa_ctx = NULL;
+/* Global — shared with the resize callback.
+ * In a real application use glfwGetWindowUserPointer() instead. */
+static glfw_osmesa_context_t *g_ctx = NULL;
 
 /* ------------------------------------------------------------------ */
 
 int main(void)
 {
-    GLFWwindow        *window;
-    int                fb_width  = 800;
-    int                fb_height = 600;
-    float              angle     = 0.0f;
-    double             last_time;
+    GLFWwindow *window;
+    int         fb_width  = 800;
+    int         fb_height = 600;
+    float       angle     = 0.0f;
+    double      last_time;
 
     glfwSetErrorCallback(error_callback);
 
@@ -52,9 +54,9 @@ int main(void)
     }
 
     /* ----------------------------------------------------------------
-     * Create a GLFW window WITHOUT a system OpenGL context.
-     * GLFW_NO_API is the key hint that tells GLFW not to ask the OS
-     * for any graphics context.
+     * Create a GLFW window with NO system OpenGL context.
+     * GLFW_NO_API is the key hint; GLFW will manage the window and
+     * events without asking the OS for a GL/Vulkan context.
      * --------------------------------------------------------------- */
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
     glfwWindowHint(GLFW_RESIZABLE,  GLFW_TRUE);
@@ -67,23 +69,23 @@ int main(void)
         return EXIT_FAILURE;
     }
 
-    /* Actual framebuffer size may differ from the requested size (e.g. HiDPI) */
+    /* HiDPI: actual framebuffer may differ from requested window size. */
     glfwGetFramebufferSize(window, &fb_width, &fb_height);
 
     /* ----------------------------------------------------------------
-     * Create the OSMesa context and bind it to the GLFW window.
+     * Set up the OSMesa context (user-land helper, NOT a GLFW API).
      * --------------------------------------------------------------- */
-    g_osmesa_ctx = glfwCreateOSMesaContext(window, fb_width, fb_height);
-    if (!g_osmesa_ctx) {
+    g_ctx = glfw_osmesa_context_create(window, fb_width, fb_height);
+    if (!g_ctx) {
         fprintf(stderr, "Failed to create OSMesa context\n");
         glfwDestroyWindow(window);
         glfwTerminate();
         return EXIT_FAILURE;
     }
 
-    if (!glfwMakeOSMesaContextCurrent(g_osmesa_ctx)) {
+    if (!glfw_osmesa_context_make_current(g_ctx)) {
         fprintf(stderr, "Failed to make OSMesa context current\n");
-        glfwDestroyOSMesaContext(g_osmesa_ctx);
+        glfw_osmesa_context_destroy(g_ctx);
         glfwDestroyWindow(window);
         glfwTerminate();
         return EXIT_FAILURE;
@@ -110,8 +112,14 @@ int main(void)
         glfwGetFramebufferSize(window, &fb_width, &fb_height);
         draw_frame(fb_width, fb_height, angle);
 
-        glFinish();   /* Ensure OSMesa has completed all rendering      */
-        glfwSwapOSMesaBuffers(g_osmesa_ctx);   /* Blit to native window */
+        glFinish();  /* ensure all OSMesa rendering has completed */
+
+        /*
+         * Present the frame.  Internally this calls the user-land
+         * implementation of glfwBlitPixelBuffer — the ONLY function
+         * proposed for addition to GLFW itself.
+         */
+        glfw_osmesa_context_swap_buffers(g_ctx);
 
         glfwPollEvents();
     }
@@ -119,7 +127,7 @@ int main(void)
     /* ----------------------------------------------------------------
      * Cleanup
      * --------------------------------------------------------------- */
-    glfwDestroyOSMesaContext(g_osmesa_ctx);
+    glfw_osmesa_context_destroy(g_ctx);
     glfwDestroyWindow(window);
     glfwTerminate();
     return EXIT_SUCCESS;
@@ -157,8 +165,8 @@ static void draw_frame(int width, int height, float angle)
 static void framebuffer_size_callback(GLFWwindow *window, int w, int h)
 {
     (void)window;
-    if (g_osmesa_ctx)
-        glfwResizeOSMesaContext(g_osmesa_ctx, w, h);
+    if (g_ctx)
+        glfw_osmesa_context_resize(g_ctx, w, h);
 }
 
 static void error_callback(int code, const char *desc)
