@@ -1,0 +1,2 @@
+/usr/bin/ar qc libglfw_osmesa.a CMakeFiles/glfw_osmesa.dir/src/glfw_osmesa.c.o
+/usr/bin/ranlib libglfw_osmesa.a

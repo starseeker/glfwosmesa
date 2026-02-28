@@ -73,7 +73,7 @@ extern "C" {
 #define GLFWOSMESA_FORMAT_RGBA  0x1908  /* GL_RGBA  */
 
 /** BGRA, 8 bits per channel, byte order B-G-R-A in memory. */
-#define GLFWOSMESA_FORMAT_BGRA  0x1    /* OSMESA_BGRA */
+#define GLFWOSMESA_FORMAT_BGRA  0x1    /* OSMESA_BGRA (Mesa-specific, != GL_BGRA 0x80E1) */
 
 /** RGB, 8 bits per channel, byte order R-G-B in memory. */
 #define GLFWOSMESA_FORMAT_RGB   0x1907  /* GL_RGB   */

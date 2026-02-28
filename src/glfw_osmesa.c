@@ -164,23 +164,31 @@ static int _platform_init(GLFWosmesaContext ctx)
 /*
  * Draw the BGRA pixel buffer into the NSWindow's content view using
  * CoreGraphics — no OpenGL involved.
+ *
+ * We set the CGImage directly on the contentView's CALayer via
+ * [layer setContents: image].  This avoids the NSGraphicsContext
+ * wrapper entirely and works reliably from a C context.
  */
 static void _platform_blit(GLFWosmesaContext ctx)
 {
     CGDataProviderRef provider;
     CGImageRef        image;
-    CGContextRef      cgctx;
     id                contentView;
     id                layer;
-    CGRect            bounds;
 
-    /* Build a CGImage backed by our pixel buffer (zero-copy). */
+    /* Build a CGImage backed by our pixel buffer (zero-copy reference). */
     provider = CGDataProviderCreateWithData(NULL, ctx->buffer,
                                             (size_t)ctx->width *
                                             (size_t)ctx->height * 4u,
                                             NULL);
     if (!provider) return;
 
+    /*
+     * kCGBitmapByteOrder32Little | kCGImageAlphaNoneSkipFirst:
+     * Interprets each 32-bit word as xRGB on little-endian, which maps
+     * the BGRA memory layout (B at byte 0 … A at byte 3) correctly to
+     * display-native BGRX.
+     */
     image = CGImageCreate((size_t)ctx->width, (size_t)ctx->height,
                           8, 32,
                           (size_t)ctx->width * 4u,
@@ -193,9 +201,12 @@ static void _platform_blit(GLFWosmesaContext ctx)
     if (!image) return;
 
     /*
-     * Obtain the CALayer of the NSWindow's content view and draw into it
-     * via its graphics context.  This uses the Objective-C runtime C API so
-     * we avoid depending on AppKit headers here.
+     * Obtain the CALayer of the NSWindow's content view and set the
+     * CGImage as its contents.  GLFW already enables wantsLayer on
+     * the content view, so the layer always exists.
+     *
+     * [layer setContents: (id)image] uses the CGImageRef directly;
+     * CALayer accepts a CGImageRef cast to id as its contents value.
      */
     contentView = ((id (*)(id, SEL))objc_msgSend)(
         ctx->nswindow,
@@ -206,38 +217,11 @@ static void _platform_blit(GLFWosmesaContext ctx)
         sel_registerName("layer"));
 
     if (layer) {
-        /* [layer setContents: image] */
-        ((void (*)(id, SEL, CGImageRef))objc_msgSend)(
+        ((void (*)(id, SEL, id))objc_msgSend)(
             layer,
             sel_registerName("setContents:"),
-            image);
+            (id)image);
     }
-
-    bounds.origin.x    = 0;
-    bounds.origin.y    = 0;
-    bounds.size.width  = (CGFloat)ctx->width;
-    bounds.size.height = (CGFloat)ctx->height;
-
-    /*
-     * Lock focus on the content view and draw with CG.
-     * [contentView lockFocus]
-     */
-    ((void (*)(id, SEL))objc_msgSend)(
-        contentView,
-        sel_registerName("lockFocus"));
-
-    cgctx = (CGContextRef)((id (*)(id, SEL))objc_msgSend)(
-        (id)objc_getClass("NSGraphicsContext"),
-        sel_registerName("currentContext"));
-
-    if (cgctx) {
-        /* The CGContextRef is wrapped; unwrap if needed. */
-        CGContextDrawImage(cgctx, bounds, image);
-    }
-
-    ((void (*)(id, SEL))objc_msgSend)(
-        contentView,
-        sel_registerName("unlockFocus"));
 
     CGImageRelease(image);
 }
