@@ -95,15 +95,17 @@ endif()
 option(GLFWOSMESA_BUILD_EXAMPLES "Build example programs" ON)
 
 if(GLFWOSMESA_BUILD_EXAMPLES)
-    add_executable(triangle examples/triangle.c)
-    target_link_libraries(triangle PRIVATE glfw_osmesa)
-    if(UNIX AND NOT APPLE)
-        target_link_libraries(triangle PRIVATE m)
-        # Embed the local osmesa lib path so the binary runs without LD_LIBRARY_PATH.
-        set_target_properties(triangle PROPERTIES
-            BUILD_RPATH "${CMAKE_CURRENT_BINARY_DIR}/osmesa/src"
-        )
-    endif()
+    foreach(_example triangle keyboard mouse gears)
+        add_executable(${_example} examples/${_example}.c)
+        target_link_libraries(${_example} PRIVATE glfw_osmesa)
+        if(UNIX AND NOT APPLE)
+            target_link_libraries(${_example} PRIVATE m)
+            # Embed the local osmesa lib path so the binary runs without LD_LIBRARY_PATH.
+            set_target_properties(${_example} PROPERTIES
+                BUILD_RPATH "${CMAKE_CURRENT_BINARY_DIR}/osmesa/src"
+            )
+        endif()
+    endforeach()
 endif()
 
 # ---------------------------------------------------------------------------
