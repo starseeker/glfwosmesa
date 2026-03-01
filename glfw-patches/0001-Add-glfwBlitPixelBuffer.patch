@@ -1,5 +1,5 @@
 diff --git a/include/GLFW/glfw3.h b/include/GLFW/glfw3.h
-index b93a004..681697c 100644
+index b93a004..ea870a6 100644
 --- a/include/GLFW/glfw3.h
 +++ b/include/GLFW/glfw3.h
 @@ -1065,6 +1065,23 @@ extern "C" {
@@ -26,15 +26,14 @@ index b93a004..681697c 100644
  #define GLFW_WAYLAND_PREFER_LIBDECOR    0x00038001
  #define GLFW_WAYLAND_DISABLE_LIBDECOR   0x00038002
  
-@@ -5559,7 +5576,58 @@ GLFWAPI GLFWwindow* glfwGetCurrentContext(void);
+@@ -5559,6 +5576,57 @@ GLFWAPI GLFWwindow* glfwGetCurrentContext(void);
   */
  GLFWAPI void glfwSwapBuffers(GLFWwindow* window);
  
--/*! @brief Sets the swap interval for the current context.
 +/*! @brief Blits a CPU pixel buffer directly to a window.
 + *
 + *  This function copies the pixels in @p pixels to the native window surface
-+ *  using only basic OS drawing primitives — no OpenGL, OpenGL ES or Vulkan
++ *  using only basic OS drawing primitives -- no OpenGL, OpenGL ES or Vulkan
 + *  context is required or used.
 + *
 + *  The window @b must have been created with:
@@ -42,7 +41,7 @@ index b93a004..681697c 100644
 + *  glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
 + *  @endcode
 + *
-+ *  @p pixels is a tightly-packed array of (@p srcWidth × @p srcHeight) pixels
++ *  @p pixels is a tightly-packed array of (@p srcWidth x @p srcHeight) pixels
 + *  in the layout described by @p format.  Row 0 is at the top of the image
 + *  (Y-down convention).  The caller is responsible for keeping the buffer
 + *  alive until this function returns.
@@ -82,10 +81,9 @@ index b93a004..681697c 100644
 +                                  int         srcHeight,
 +                                  int         format);
 +
-+/*! @brief Sets the swap interval for the current context. for the current context.
+ /*! @brief Sets the swap interval for the current context.
   *
   *  This function sets the swap interval for the current OpenGL or OpenGL ES
-  *  context, i.e. the number of screen updates to wait from the time @ref
 diff --git a/src/CMakeLists.txt b/src/CMakeLists.txt
 index efd6592..17b2658 100644
 --- a/src/CMakeLists.txt
@@ -110,10 +108,10 @@ index efd6592..17b2658 100644
                                  win32_window.c wgl_context.c egl_context.c
 diff --git a/src/blit.c b/src/blit.c
 new file mode 100644
-index 0000000..e124643
+index 0000000..d6ce049
 --- /dev/null
 +++ b/src/blit.c
-@@ -0,0 +1,333 @@
+@@ -0,0 +1,318 @@
 +//========================================================================
 +// GLFW 3.3 - www.glfw.org
 +//------------------------------------------------------------------------
@@ -143,7 +141,7 @@ index 0000000..e124643
 +// Please use C89 style variable declarations in this file because VS 2010
 +//========================================================================
 +
-+// glfwBlitPixelBuffer — copy a CPU pixel buffer to a GLFW_NO_API window.
++// glfwBlitPixelBuffer -- copy a CPU pixel buffer to a GLFW_NO_API window.
 +//
 +// Platform implementations
 +// ========================
@@ -157,7 +155,6 @@ index 0000000..e124643
 +#include <assert.h>
 +#include <stdlib.h>
 +#include <string.h>
-+#include <stdio.h>
 +
 +#if defined(_GLFW_COCOA)
 +// objc_msgSend is used to call [layer setContents:] from plain C.
@@ -169,16 +166,16 @@ index 0000000..e124643
 +
 +
 +//////////////////////////////////////////////////////////////////////////
-+//////                   Internal helper: format swap                //////
++//////                    Internal helper: R/B swap                 //////
 +//////////////////////////////////////////////////////////////////////////
 +
-+// Swap R and B channels in-place for a tightly-packed 32-bit-per-pixel
-+// RGBA buffer so that it becomes BGRA (or vice versa).  Used only when
-+// the caller supplies RGBA but the platform needs BGRA.
++// Swap R and B channels in a tightly-packed 32-bit-per-pixel RGBA buffer,
++// writing the result to dst (which may differ from src).  Used to convert
++// RGBA to BGRA when the caller supplies RGBA but the platform needs BGRA.
 +//
-+static void _glfwSwapRB(unsigned char* dst,
-+                        const unsigned char* src,
-+                        int width, int height)
++static void swapRB(unsigned char* dst,
++                   const unsigned char* src,
++                   int width, int height)
 +{
 +    int i;
 +    int npixels = width * height;
@@ -234,20 +231,20 @@ index 0000000..e124643
 +
 +#if defined(_GLFW_X11)
 +    {
-+        Display*     dpy    = _glfw.x11.display;
-+        Window       xwin   = window->x11.handle;
-+        int          screen = _glfw.x11.screen;
-+        Visual*      visual = DefaultVisual(dpy, screen);
-+        GC           gc     = DefaultGC(dpy, screen);
-+        int          depth  = DefaultDepth(dpy, screen);
-+        size_t       nbytes = (size_t)srcWidth * (size_t)srcHeight * 4u;
-+        const void*  bgraPixels;
-+        unsigned char* tmp  = NULL;
-+        XImage*      img;
-+        char*        data;
++        Display*       dpy       = _glfw.x11.display;
++        Window         xwin      = window->x11.handle;
++        int            screen    = _glfw.x11.screen;
++        Visual*        visual    = DefaultVisual(dpy, screen);
++        GC             gc        = DefaultGC(dpy, screen);
++        int            depth     = DefaultDepth(dpy, screen);
++        size_t         nbytes    = (size_t)srcWidth * (size_t)srcHeight * 4u;
++        const void*    bgraPixels;
++        unsigned char* tmp       = NULL;
++        char*          data;
++        XImage*        img;
 +
 +        // On little-endian x86/x86-64, XPutImage with a 32-bit TrueColor
-+        // visual expects BGRA byte order.  Convert RGBA if needed.
++        // visual expects BGRA byte order.  Convert RGBA->BGRA if needed.
 +        if (format == GLFW_PIXEL_FORMAT_RGBA)
 +        {
 +            tmp = (unsigned char*) malloc(nbytes);
@@ -257,7 +254,7 @@ index 0000000..e124643
 +                                "glfwBlitPixelBuffer: malloc failed");
 +                return;
 +            }
-+            _glfwSwapRB(tmp, (const unsigned char*) pixels, srcWidth, srcHeight);
++            swapRB(tmp, (const unsigned char*) pixels, srcWidth, srcHeight);
 +            bgraPixels = tmp;
 +        }
 +        else
@@ -265,7 +262,7 @@ index 0000000..e124643
 +            bgraPixels = pixels;
 +        }
 +
-+        // XDestroyImage will call free() on img->data, so pass a copy.
++        // XDestroyImage will free() img->data, so hand it a malloc'd copy.
 +        data = (char*) malloc(nbytes);
 +        if (!data)
 +        {
@@ -280,12 +277,12 @@ index 0000000..e124643
 +        img = XCreateImage(dpy, visual,
 +                           (unsigned int)depth,
 +                           ZPixmap,
-+                           0,
++                           0,       /* offset */
 +                           data,
 +                           (unsigned int)srcWidth,
 +                           (unsigned int)srcHeight,
-+                           32,  /* bitmap_pad */
-+                           0);  /* bytes_per_line: 0 = auto */
++                           32,      /* bitmap_pad */
++                           0);      /* bytes_per_line: 0 = auto */
 +        if (!img)
 +        {
 +            free(data);
@@ -294,23 +291,20 @@ index 0000000..e124643
 +            return;
 +        }
 +
-+        XPutImage(dpy, xwin, gc, img,
-+                  0, 0, 0, 0,
-+                  (unsigned int)srcWidth,
-+                  (unsigned int)srcHeight);
++        XPutImage(dpy, xwin, gc, img, 0, 0, 0, 0,
++                  (unsigned int)srcWidth, (unsigned int)srcHeight);
 +        XFlush(dpy);
-+
 +        XDestroyImage(img); /* frees data */
 +    }
 +
 +#elif defined(_GLFW_WIN32)
 +    {
-+        HWND       hwnd = window->win32.handle;
-+        HDC        hdc;
-+        BITMAPINFO bmi;
-+        const void* bgraPixels;
-+        unsigned char* tmp = NULL;
-+        size_t nbytes = (size_t)srcWidth * (size_t)srcHeight * 4u;
++        HWND           hwnd      = window->win32.handle;
++        HDC            hdc;
++        BITMAPINFO     bmi;
++        const void*    bgraPixels;
++        unsigned char* tmp       = NULL;
++        size_t         nbytes    = (size_t)srcWidth * (size_t)srcHeight * 4u;
 +
 +        hdc = GetDC(hwnd);
 +        if (!hdc)
@@ -331,7 +325,7 @@ index 0000000..e124643
 +                                "glfwBlitPixelBuffer: malloc failed");
 +                return;
 +            }
-+            _glfwSwapRB(tmp, (const unsigned char*) pixels, srcWidth, srcHeight);
++            swapRB(tmp, (const unsigned char*) pixels, srcWidth, srcHeight);
 +            bgraPixels = tmp;
 +        }
 +        else
@@ -350,11 +344,8 @@ index 0000000..e124643
 +        SetDIBitsToDevice(hdc,
 +                          0, 0,
 +                          (DWORD)srcWidth, (DWORD)srcHeight,
-+                          0, 0,
-+                          0, (UINT)srcHeight,
-+                          bgraPixels,
-+                          &bmi,
-+                          DIB_RGB_COLORS);
++                          0, 0, 0, (UINT)srcHeight,
++                          bgraPixels, &bmi, DIB_RGB_COLORS);
 +
 +        free(tmp);
 +        ReleaseDC(hwnd, hdc);
@@ -363,16 +354,14 @@ index 0000000..e124643
 +#elif defined(_GLFW_COCOA)
 +    {
 +        // Use CoreGraphics to build a CGImage and set it on the window's
-+        // CALayer.  The layer exists because GLFW calls setWantsLayer on the
-+        // content view during window creation.
-+        id layer = window->ns.layer;
++        // CALayer via [layer setContents: (id)image].
++        id                layer     = window->ns.layer;
 +        CGColorSpaceRef   cs;
 +        CGDataProviderRef provider;
 +        CGImageRef        image;
-+        CGBitmapInfo      bitmapInfo;
 +        const void*       bgraPixels;
-+        unsigned char*    tmp = NULL;
-+        size_t            nbytes = (size_t)srcWidth * (size_t)srcHeight * 4u;
++        unsigned char*    tmp       = NULL;
++        size_t            nbytes    = (size_t)srcWidth * (size_t)srcHeight * 4u;
 +
 +        if (!layer)
 +        {
@@ -381,9 +370,9 @@ index 0000000..e124643
 +            return;
 +        }
 +
-+        // CoreGraphics with kCGBitmapByteOrder32Little|AlphaNoneSkipFirst
-+        // interprets each 32-bit word as xRGB on little-endian, which maps
-+        // BGRA memory layout correctly to display-native BGRX.
++        // CoreGraphics kCGBitmapByteOrder32Little|AlphaNoneSkipFirst reads
++        // each 32-bit word as xRGB on little-endian, mapping BGRA memory
++        // layout to display-native BGRX with no per-pixel conversion.
 +        if (format == GLFW_PIXEL_FORMAT_RGBA)
 +        {
 +            tmp = (unsigned char*) malloc(nbytes);
@@ -393,7 +382,7 @@ index 0000000..e124643
 +                                "glfwBlitPixelBuffer: malloc failed");
 +                return;
 +            }
-+            _glfwSwapRB(tmp, (const unsigned char*) pixels, srcWidth, srcHeight);
++            swapRB(tmp, (const unsigned char*) pixels, srcWidth, srcHeight);
 +            bgraPixels = tmp;
 +        }
 +        else
@@ -401,28 +390,22 @@ index 0000000..e124643
 +            bgraPixels = pixels;
 +        }
 +
-+        bitmapInfo = kCGBitmapByteOrder32Little | kCGImageAlphaNoneSkipFirst;
 +        cs = CGColorSpaceCreateDeviceRGB();
 +        provider = CGDataProviderCreateWithData(NULL, bgraPixels, nbytes, NULL);
-+        image = CGImageCreate((size_t)srcWidth,
-+                              (size_t)srcHeight,
-+                              8, 32,
-+                              (size_t)srcWidth * 4u,
++        image = CGImageCreate((size_t)srcWidth, (size_t)srcHeight,
++                              8, 32, (size_t)srcWidth * 4u,
 +                              cs,
-+                              bitmapInfo,
-+                              provider,
-+                              NULL, false,
++                              kCGBitmapByteOrder32Little |
++                                  kCGImageAlphaNoneSkipFirst,
++                              provider, NULL, false,
 +                              kCGRenderingIntentDefault);
 +        CGDataProviderRelease(provider);
 +        CGColorSpaceRelease(cs);
 +
 +        if (image)
 +        {
-+            // [layer setContents: (id)image]
 +            ((void (*)(id, SEL, id))objc_msgSend)(
-+                layer,
-+                sel_registerName("setContents:"),
-+                (id)image);
++                layer, sel_registerName("setContents:"), (id)image);
 +            CGImageRelease(image);
 +        }
 +        else
