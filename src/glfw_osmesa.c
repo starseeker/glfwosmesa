@@ -304,8 +304,121 @@ static void _platform_destroy(glfw_osmesa_context_t *ctx)
 #endif /* platform */
 
 /* ==================================================================
- * Public API (snake_case, glfw_osmesa_context_ prefix)
+ * Public API (snake_case)
  * ================================================================== */
+
+/*
+ * glfw_blit_pixels — blit a raw BGRA buffer to a GLFW window.
+ *
+ * This is the shared display primitive for both the OSMesa and NanoRT backends.
+ * The OSMesa backend (glfw_osmesa_context_swap_buffers) calls _platform_blit
+ * which keeps a cached GC for efficiency.  This public function is designed for
+ * callers that do not hold a glfw_osmesa_context_t and therefore create the
+ * necessary GC (or equivalent) once per call, which is acceptable for
+ * CPU-bound renderers such as ray tracers.
+ */
+void glfw_blit_pixels(GLFWwindow  *window,
+                      const void  *pixels,
+                      int          width,
+                      int          height)
+{
+    if (!window || !pixels || width <= 0 || height <= 0)
+        return;
+
+#ifdef GLFW_PIXEL_FORMAT_BGRA
+    glfwBlitPixelBuffer(window, pixels, width, height, GLFW_PIXEL_FORMAT_BGRA);
+
+#elif defined(_WIN32)
+    {
+        HWND       hwnd = glfwGetWin32Window(window);
+        HDC        hdc  = GetDC(hwnd);
+        BITMAPINFO bmi;
+
+        if (!hdc) return;
+        memset(&bmi, 0, sizeof(bmi));
+        bmi.bmiHeader.biSize        = sizeof(BITMAPINFOHEADER);
+        bmi.bmiHeader.biWidth       = width;
+        bmi.bmiHeader.biHeight      = -height; /* negative = top-down */
+        bmi.bmiHeader.biPlanes      = 1;
+        bmi.bmiHeader.biBitCount    = 32;
+        bmi.bmiHeader.biCompression = BI_RGB;
+        SetDIBitsToDevice(hdc, 0, 0, (DWORD)width, (DWORD)height,
+                          0, 0, 0, (UINT)height,
+                          pixels, &bmi, DIB_RGB_COLORS);
+        ReleaseDC(hwnd, hdc);
+    }
+
+#elif defined(__APPLE__)
+    {
+        CGColorSpaceRef   cs;
+        CGDataProviderRef prov;
+        CGImageRef        img;
+        id                nswindow, contentView, layer;
+
+        cs = CGColorSpaceCreateDeviceRGB();
+        if (!cs) return;
+
+        prov = CGDataProviderCreateWithData(
+                   NULL, pixels,
+                   (size_t)width * (size_t)height * 4u,
+                   NULL);
+        if (!prov) { CGColorSpaceRelease(cs); return; }
+
+        img = CGImageCreate((size_t)width, (size_t)height, 8, 32,
+                            (size_t)width * 4u, cs,
+                            kCGBitmapByteOrder32Little |
+                                kCGImageAlphaNoneSkipFirst,
+                            prov, NULL, false, kCGRenderingIntentDefault);
+        CGDataProviderRelease(prov);
+        CGColorSpaceRelease(cs);
+        if (!img) return;
+
+        nswindow    = (id)glfwGetCocoaWindow(window);
+        contentView = ((id (*)(id, SEL))objc_msgSend)(
+                          nswindow, sel_registerName("contentView"));
+        layer       = ((id (*)(id, SEL))objc_msgSend)(
+                          contentView, sel_registerName("layer"));
+        if (layer)
+            ((void (*)(id, SEL, id))objc_msgSend)(
+                layer, sel_registerName("setContents:"), (id)img);
+        CGImageRelease(img);
+    }
+
+#else /* X11 */
+    {
+        Display            *dpy = glfwGetX11Display();
+        Window              win = glfwGetX11Window(window);
+        XWindowAttributes   attrs;
+        GC                  gc;
+        char               *data;
+        XImage             *img;
+
+        XGetWindowAttributes(dpy, win, &attrs);
+        gc = XCreateGC(dpy, win, 0, NULL);
+        if (!gc) return;    /* early-out; all subsequent XFreeGC paths hold gc != NULL */
+
+        /* XDestroyImage will call free() on img->data, so pass a copy. */
+        data = (char *)malloc((size_t)width * (size_t)height * 4u);
+        if (!data) { XFreeGC(dpy, gc); return; }
+        memcpy(data, pixels, (size_t)width * (size_t)height * 4u);
+
+        img = XCreateImage(dpy, attrs.visual,
+                           (unsigned int)attrs.depth,
+                           ZPixmap, 0, data,
+                           (unsigned int)width, (unsigned int)height,
+                           32, 0);
+        if (!img) { free(data); XFreeGC(dpy, gc); return; }
+
+        XPutImage(dpy, win, gc, img, 0, 0, 0, 0,
+                  (unsigned int)width, (unsigned int)height);
+        XFlush(dpy);
+        XDestroyImage(img);
+        XFreeGC(dpy, gc);
+    }
+#endif
+}
+
+
 
 glfw_osmesa_context_t *glfw_osmesa_context_create(GLFWwindow *window,
                                                    int         width,
