@@ -120,14 +120,52 @@ The first build downloads GLFW 3.3.10 and Mesa 23.3.6 from their official
 release archives, applies the `glfwBlitPixelBuffer` patch to GLFW, and
 compiles both.  Subsequent builds are incremental.
 
-### Run the example
+### Run the examples
 
 ```bash
-./build/triangle
+./build/triangle   # rotating RGB triangle (basic setup demo)
+./build/keyboard   # keyboard input demo
+./build/mouse      # mouse input demo
+./build/gears      # classic 3-D gear wheels (adapted from GLFW's own example)
 ```
 
-Opens an 800 x 600 window with a rotating RGB triangle rendered entirely by
-OSMesa.  No GPU or system OpenGL driver is used.
+All four examples open a window rendered entirely by OSMesa.
+No GPU or system OpenGL driver is used.
+
+| Example    | Window size | What it shows |
+|------------|-------------|----------------|
+| `triangle` | 800 × 600   | Minimal setup: GLFW_NO_API window + OSMesa context + fixed-function rendering |
+| `keyboard` | 800 × 600   | `glfwSetKeyCallback`, `glfwGetKey` polling, `glfwSetWindowTitle`, `glfwSetWindowUserPointer` |
+| `mouse`    | 800 × 600   | `glfwSetCursorPosCallback`, `glfwSetMouseButtonCallback`, `glfwSetScrollCallback` |
+| `gears`    | 300 × 300   | Classic 3-D lit gear wheels — demonstrates that real GLFW examples using the fixed-function pipeline work unchanged with the OSMesa backend |
+
+#### keyboard key bindings
+| Key | Action |
+|-----|--------|
+| ESC / Q | close |
+| SPACE | toggle auto-rotation on/off |
+| R | reset rotation angle |
+| LEFT / RIGHT | manual rotation (when auto-rotation is off) |
+| UP / DOWN | increase / decrease rotation speed |
+| + / − | scale triangle up / down |
+
+#### mouse interactions
+| Input | Action |
+|-------|--------|
+| Move cursor | crosshair follows the cursor |
+| Left click | stamp a coloured dot at the cursor position |
+| Right click | clear all dots |
+| Scroll | resize the crosshair |
+| ESC / Q | close |
+
+#### gears key bindings
+| Key | Action |
+|-----|--------|
+| ESC | close |
+| UP / DOWN | tilt the scene |
+| LEFT / RIGHT | pan the scene |
+| Z | rotate around Z axis |
+| Shift+Z | rotate around Z axis (reverse) |
 
 ## API reference
 
