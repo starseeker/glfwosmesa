@@ -95,16 +95,6 @@ endif()
 option(GLFWOSMESA_BUILD_EXAMPLES "Build example programs" ON)
 
 if(GLFWOSMESA_BUILD_EXAMPLES)
-    add_executable(triangle examples/triangle.c)
-    target_link_libraries(triangle PRIVATE glfw_osmesa)
-    if(UNIX AND NOT APPLE)
-        target_link_libraries(triangle PRIVATE m)
-        # Embed the local osmesa lib path so the binary runs without LD_LIBRARY_PATH.
-        set_target_properties(triangle PROPERTIES
-            BUILD_RPATH "${CMAKE_CURRENT_BINARY_DIR}/osmesa/src"
-        )
-    endif()
-
     # ---------------------------------------------------------------------------
     # NanoRT interactive viewer — CPU ray tracer displayed via glfw_blit_pixels.
     # Demonstrates NanoRT as an alternative rendering backend to OSMesa: no
