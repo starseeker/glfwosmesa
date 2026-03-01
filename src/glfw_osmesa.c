@@ -37,10 +37,13 @@
 #  define GLFW_EXPOSE_NATIVE_X11
 #endif
 
+/* Include osmesa first so OSMesa/gl.h sets __gl_h_, preventing glfw3.h
+ * from attempting to pull in the system <GL/gl.h>. */
+#include <OSMesa/osmesa.h>
+
 #include <GLFW/glfw3.h>
 #include <GLFW/glfw3native.h>
 
-#include <GL/osmesa.h>
 #include "glfw_osmesa.h"
 
 #include <stdlib.h>
@@ -118,6 +121,7 @@ static int _platform_init(glfw_osmesa_context_t *ctx)
     return ctx->hwnd ? GLFW_TRUE : GLFW_FALSE;
 }
 
+#ifndef GLFW_PIXEL_FORMAT_BGRA
 static void _platform_update_bmi(glfw_osmesa_context_t *ctx)
 {
     BITMAPINFOHEADER *h = &ctx->bmi.bmiHeader;
@@ -129,11 +133,13 @@ static void _platform_update_bmi(glfw_osmesa_context_t *ctx)
     h->biBitCount    = 32;
     h->biCompression = BI_RGB;
 }
+#endif /* !GLFW_PIXEL_FORMAT_BGRA */
 
 /*
  * glfwBlitPixelBuffer — Windows implementation (GDI)
  * This is what the proposed upstream GLFW function would call on Win32.
  */
+#ifndef GLFW_PIXEL_FORMAT_BGRA
 static void _platform_blit(glfw_osmesa_context_t *ctx)
 {
     HDC hdc;
@@ -150,6 +156,7 @@ static void _platform_blit(glfw_osmesa_context_t *ctx)
                       DIB_RGB_COLORS);
     ReleaseDC(ctx->hwnd, hdc);
 }
+#endif /* !GLFW_PIXEL_FORMAT_BGRA */
 
 static void _platform_destroy(glfw_osmesa_context_t *ctx)
 {
@@ -173,6 +180,7 @@ static int _platform_init(glfw_osmesa_context_t *ctx)
  * Sets a CGImage directly on the content view's CALayer via
  * [layer setContents: image] — no NSGraphicsContext unwrapping needed.
  */
+#ifndef GLFW_PIXEL_FORMAT_BGRA
 static void _platform_blit(glfw_osmesa_context_t *ctx)
 {
     CGDataProviderRef provider;
@@ -216,6 +224,7 @@ static void _platform_blit(glfw_osmesa_context_t *ctx)
 
     CGImageRelease(image);
 }
+#endif /* !GLFW_PIXEL_FORMAT_BGRA */
 
 static void _platform_destroy(glfw_osmesa_context_t *ctx)
 {
@@ -249,6 +258,7 @@ static int _platform_init(glfw_osmesa_context_t *ctx)
  * On little-endian x86/x86-64 with a 32-bit TrueColor visual the BGRA byte
  * order matches the native pixel layout — no per-pixel conversion needed.
  */
+#ifndef GLFW_PIXEL_FORMAT_BGRA
 static void _platform_blit(glfw_osmesa_context_t *ctx)
 {
     char   *data;
@@ -283,6 +293,7 @@ static void _platform_blit(glfw_osmesa_context_t *ctx)
     /* XDestroyImage frees both the XImage struct and img->data. */
     XDestroyImage(img);
 }
+#endif /* !GLFW_PIXEL_FORMAT_BGRA */
 
 static void _platform_destroy(glfw_osmesa_context_t *ctx)
 {
@@ -301,14 +312,6 @@ glfw_osmesa_context_t *glfw_osmesa_context_create(GLFWwindow *window,
                                                    int         height)
 {
     glfw_osmesa_context_t *ctx;
-    const int attribs[] = {
-        OSMESA_FORMAT,                OSMESA_BGRA,
-        OSMESA_DEPTH_BITS,            24,
-        OSMESA_STENCIL_BITS,          8,
-        OSMESA_CONTEXT_MAJOR_VERSION, 2,
-        OSMESA_CONTEXT_MINOR_VERSION, 0,
-        0  /* terminate */
-    };
 
     if (!window || width <= 0 || height <= 0) {
         fprintf(stderr, "glfw_osmesa: invalid parameters to "
@@ -321,9 +324,13 @@ glfw_osmesa_context_t *glfw_osmesa_context_create(GLFWwindow *window,
 
     ctx->window = window;
 
-    ctx->osmesa = OSMesaCreateContextAttribs(attribs, NULL);
+    ctx->osmesa = OSMesaCreateContextExt(OSMESA_BGRA,
+                                          24,   /* depth bits   */
+                                          8,    /* stencil bits */
+                                          0,    /* accum bits   */
+                                          NULL  /* share list   */);
     if (!ctx->osmesa) {
-        fprintf(stderr, "glfw_osmesa: OSMesaCreateContextAttribs failed\n");
+        fprintf(stderr, "glfw_osmesa: OSMesaCreateContextExt failed\n");
         free(ctx);
         return NULL;
     }

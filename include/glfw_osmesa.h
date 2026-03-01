@@ -64,8 +64,11 @@
 #ifndef GLFW_OSMESA_H
 #define GLFW_OSMESA_H
 
+/* Include osmesa first so OSMesa/gl.h sets __gl_h_, preventing glfw3.h
+ * from attempting to pull in the system <GL/gl.h> which may not be present
+ * when building against the local OSMesa library only. */
+#include <OSMesa/osmesa.h>
 #include <GLFW/glfw3.h>
-#include <GL/osmesa.h>
 
 #ifdef __cplusplus
 extern "C" {

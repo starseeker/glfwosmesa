@@ -1176,6 +1176,23 @@ extern "C" {
 #define GLFW_ANGLE_PLATFORM_TYPE_VULKAN  0x00037007
 #define GLFW_ANGLE_PLATFORM_TYPE_METAL   0x00037008
 
+/*! @defgroup pixel_formats Pixel formats
+ *  @brief Pixel buffer formats for @ref glfwBlitPixelBuffer.
+ *
+ *  These constants identify the layout of the pixel data passed to
+ *  @ref glfwBlitPixelBuffer.
+ *  @ingroup window
+ *  @{ */
+/*! @brief RGBA, 8 bits per channel (R at lowest address). */
+#define GLFW_PIXEL_FORMAT_RGBA    0x00039001
+/*! @brief BGRA, 8 bits per channel (B at lowest address).
+ *  On little-endian x86/x86-64 this matches the native pixel layout of
+ *  X11, GDI and CoreGraphics, so no per-pixel conversion is needed. */
+#define GLFW_PIXEL_FORMAT_BGRA    0x00039002
+/*! @brief RGB, 8 bits per channel (R at lowest address). */
+#define GLFW_PIXEL_FORMAT_RGB     0x00039003
+/*! @} */
+
 #define GLFW_WAYLAND_PREFER_LIBDECOR    0x00038001
 #define GLFW_WAYLAND_DISABLE_LIBDECOR   0x00038002
 
@@ -6162,6 +6179,33 @@ GLFWAPI GLFWwindow* glfwGetCurrentContext(void);
  *  @ingroup window
  */
 GLFWAPI void glfwSwapBuffers(GLFWwindow* window);
+
+/*! @brief Blits a CPU pixel buffer directly to a window.
+ *
+ *  This function copies the pixels in @p pixels to the native window surface
+ *  using only basic OS drawing primitives -- no OpenGL, OpenGL ES or Vulkan
+ *  context is required or used.
+ *
+ *  The window @b must have been created with:
+ *  @code
+ *  glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
+ *  @endcode
+ *
+ *  @param[in] window    The window to blit into.
+ *  @param[in] pixels    Pointer to the pixel data.
+ *  @param[in] srcWidth  Width of @p pixels in pixels.
+ *  @param[in] srcHeight Height of @p pixels in pixels.
+ *  @param[in] format    Pixel layout: one of @ref GLFW_PIXEL_FORMAT_RGBA,
+ *                       @ref GLFW_PIXEL_FORMAT_BGRA or
+ *                       @ref GLFW_PIXEL_FORMAT_RGB.
+ *
+ *  @ingroup window
+ */
+GLFWAPI void glfwBlitPixelBuffer(GLFWwindow* window,
+                                  const void* pixels,
+                                  int         srcWidth,
+                                  int         srcHeight,
+                                  int         format);
 
 /*! @brief Sets the swap interval for the current context.
  *
