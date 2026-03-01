@@ -93,12 +93,21 @@ dead code.
 
 ### Prerequisites
 
-| Platform       | Packages                                              |
-|----------------|-------------------------------------------------------|
-| Debian/Ubuntu  | `libglfw3-dev libosmesa6-dev libx11-dev cmake`        |
-| Fedora/RHEL    | `glfw-devel mesa-libOSMesa-devel libX11-devel cmake`  |
-| Windows        | GLFW + Mesa (build from source or use MSYS2)          |
-| macOS          | `brew install glfw mesa`                              |
+The build system downloads and compiles GLFW 3.3.10 (with the
+`glfwBlitPixelBuffer` patch applied) and Mesa OSMesa locally, so no
+system GL libraries are required.  You do need the tools that drive those
+local builds:
+
+| Platform       | Packages                                                               |
+|----------------|------------------------------------------------------------------------|
+| Debian/Ubuntu  | `cmake ninja-build meson python3-mako libx11-dev patch`               |
+| Fedora/RHEL    | `cmake ninja-build meson python3-mako libX11-devel patch`             |
+| Windows        | CMake, ninja, meson, patch (e.g. via MSYS2 or Git-for-Windows)        |
+| macOS          | `brew install cmake ninja meson` (`patch` is bundled with Xcode CLT)  |
+
+`python3-mako` is a Mesa build dependency used by its shader template system.
+If it is absent, the `meson setup` step will exit with an error mentioning
+`mako` or `mako.template`.
 
 ### Build
 
@@ -106,6 +115,10 @@ dead code.
 cmake -S . -B build
 cmake --build build
 ```
+
+The first build downloads GLFW 3.3.10 and Mesa 23.3.6 from their official
+release archives, applies the `glfwBlitPixelBuffer` patch to GLFW, and
+compiles both.  Subsequent builds are incremental.
 
 ### Run the example
 
