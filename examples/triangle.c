@@ -24,8 +24,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-#include <GLFW/glfw3.h>
 #include "glfw_osmesa.h"
+#include <GLFW/glfw3.h>
 
 /* Forward declarations */
 static void draw_frame(int width, int height, float angle);
