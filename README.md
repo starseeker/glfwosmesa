@@ -55,27 +55,39 @@ rendering comes from a *software* rasteriser:
 
 The **only** new function proposed for GLFW itself is a generic pixel-blit
 primitive.  It has no knowledge of OSMesa — the application is responsible for
-producing the pixel buffer using whatever renderer it chooses:
+producing the pixel buffer using whatever renderer it chooses.
+
+A ready-to-apply patch for GLFW 3.3.10 lives in
+[`glfw-patches/`](glfw-patches/):
+
+```bash
+# Apply to your local GLFW 3.3.10 source tree:
+patch -p1 -d <glfw-source-dir> < glfw-patches/0001-Add-glfwBlitPixelBuffer.patch
+```
+
+The patch adds:
 
 ```c
+/* New pixel-format constants */
+#define GLFW_PIXEL_FORMAT_RGBA    0x00037001
+#define GLFW_PIXEL_FORMAT_BGRA    0x00037002
+#define GLFW_PIXEL_FORMAT_RGB     0x00037003
+
 /*
- * Blit a CPU pixel buffer to a GLFW window using native OS drawing
- * primitives.  The window must have been created with
- * GLFW_CLIENT_API = GLFW_NO_API.
- *
- * @param window    Target GLFW window.
- * @param pixels    Pixel data in the format specified by 'format'.
- * @param srcWidth  Width  of the pixel buffer in pixels.
- * @param srcHeight Height of the pixel buffer in pixels.
- * @param format    GLFW_OSMESA_FORMAT_RGBA / BGRA / RGB (or an equivalent
- *                  token that upstream GLFW would define).
+ * Blit a CPU pixel buffer directly to a GLFW_NO_API window using only
+ * native OS drawing primitives — no OpenGL or Vulkan required.
  */
-void glfwBlitPixelBuffer(GLFWwindow *window,
-                         const void *pixels,
-                         int         srcWidth,
-                         int         srcHeight,
-                         int         format);
+void glfwBlitPixelBuffer(GLFWwindow* window,
+                          const void* pixels,
+                          int         srcWidth,
+                          int         srcHeight,
+                          int         format);
 ```
+
+Once the patched GLFW is installed, `glfw_osmesa_context_swap_buffers()`
+automatically delegates to `glfwBlitPixelBuffer()` (detected via
+`#ifdef GLFW_PIXEL_FORMAT_BGRA`), and the inline fallback code becomes
+dead code.
 
 ## Quick-start
 

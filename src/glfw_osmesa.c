@@ -377,7 +377,19 @@ int glfw_osmesa_context_resize(glfw_osmesa_context_t *ctx,
 void glfw_osmesa_context_swap_buffers(glfw_osmesa_context_t *ctx)
 {
     if (!ctx || !ctx->buffer) return;
+#ifdef GLFW_PIXEL_FORMAT_BGRA
+    /*
+     * Patched GLFW is present: delegate entirely to the canonical
+     * glfwBlitPixelBuffer() from glfw-patches/0001-Add-glfwBlitPixelBuffer.patch.
+     * The inline platform code below becomes unreachable once the patch is applied.
+     */
+    glfwBlitPixelBuffer(ctx->window, ctx->buffer,
+                        ctx->width, ctx->height,
+                        GLFW_PIXEL_FORMAT_BGRA);
+#else
+    /* Fallback for stock (unpatched) GLFW: inline platform blit. */
     _platform_blit(ctx);
+#endif
 }
 
 void glfw_osmesa_context_destroy(glfw_osmesa_context_t *ctx)

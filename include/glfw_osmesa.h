@@ -16,6 +16,15 @@
  *                            int         height,
  *                            int         format);
  *
+ * A ready-to-apply patch adding this function to GLFW 3.3.10 is provided at:
+ *   glfw-patches/0001-Add-glfwBlitPixelBuffer.patch
+ * Apply it with:
+ *   patch -p1 -d <glfw-source-dir> < glfw-patches/0001-Add-glfwBlitPixelBuffer.patch
+ *
+ * When that patched GLFW is present, glfw_osmesa_context_swap_buffers()
+ * delegates entirely to glfwBlitPixelBuffer() and the platform-specific
+ * fallback code in glfw_osmesa.c becomes dead code.
+ *
  * Everything else in this file lives in user-land and is named accordingly.
  *
  * HOW IT WORKS
@@ -24,9 +33,9 @@
  * 2.  Application calls glfw_osmesa_context_create() to get a context handle
  *     that owns an OSMesa context + a BGRA pixel buffer.
  * 3.  Application renders using standard OpenGL calls (satisfied by OSMesa).
- * 4.  glfw_osmesa_context_swap_buffers() calls glfwBlitPixelBuffer() which
- *     copies the finished pixels to the native window using only basic OS
- *     drawing primitives:
+ * 4.  glfw_osmesa_context_swap_buffers() calls glfwBlitPixelBuffer() (or an
+ *     inline fallback for stock GLFW) to copy the finished pixels to the
+ *     native window using only basic OS drawing primitives:
  *       - Linux/X11  : XPutImage()
  *       - Windows    : SetDIBitsToDevice()
  *       - macOS      : CALayer setContents + CGImage
