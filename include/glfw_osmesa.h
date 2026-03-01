@@ -216,6 +216,31 @@ const void *glfw_osmesa_context_get_pixels(glfw_osmesa_context_t *ctx,
  */
 OSMesaContext glfw_osmesa_context_get_raw(glfw_osmesa_context_t *ctx);
 
+/* -------------------------------------------------------------------------
+ * Standalone pixel blit
+ * ------------------------------------------------------------------------- */
+
+/**
+ * Blits a raw BGRA pixel buffer directly to a GLFW window.
+ *
+ * This is the low-level display primitive used by both the OSMesa and NanoRT
+ * backends.  glfw_osmesa_context_swap_buffers() calls it internally; other
+ * CPU-side renderers (e.g. NanoRT) can call it directly without creating an
+ * OSMesa context at all.
+ *
+ * Pixel layout: BGRA, 8 bits per channel, row-major, top-down
+ * (row 0 is the topmost scanline on screen).
+ *
+ * @param window  GLFW window created with GLFW_CLIENT_API = GLFW_NO_API.
+ * @param pixels  BGRA pixel data, width * height * 4 bytes.
+ * @param width   Framebuffer width  in pixels.
+ * @param height  Framebuffer height in pixels.
+ */
+void glfw_blit_pixels(GLFWwindow  *window,
+                      const void  *pixels,
+                      int          width,
+                      int          height);
+
 #ifdef __cplusplus
 }
 #endif
